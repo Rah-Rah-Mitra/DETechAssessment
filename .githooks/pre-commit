@@ -1,0 +1,220 @@
+#!/bin/sh
+# ---------------------------------------------------------------------------
+# Pre-commit hook: sync AI-assistant chat sessions for THIS repo into the repo.
+#
+# It copies the raw session files (verbatim, no parsing) written to disk by
+# supported AI coding assistants into prompt-logger/<tool>/ and stages them so
+# they land in the same commit.
+#
+# Design goals:
+#   * Zero dependencies  - pure POSIX sh + cp/grep/find. No jq, no node.
+#   * Cross-platform      - macOS, Linux, and Windows (Git Bash / Git for Windows).
+#   * Never blocks a commit - any missing store / no match just skips. Always exit 0.
+#
+# Supported out of the box: Claude Code, Codex CLI, Cline (VS Code).
+# Other tools: export manually per docs/AI_PROMPTS.md.
+# ---------------------------------------------------------------------------
+
+# Never let this hook fail a commit.
+set +e
+
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+REPO_NAME=$(basename "$REPO_ROOT")
+# Parent directory name, used to qualify name-based matches so we don't scoop up
+# unrelated sessions from a different project that merely shares this basename.
+PARENT_NAME=$(basename "$(dirname "$REPO_ROOT")")
+OUT_DIR="$REPO_ROOT/prompt-logger"
+
+# Slugify the full repo path the way Claude Code names its project folders:
+# every non-alphanumeric character becomes a dash.
+REPO_SLUG=$(printf '%s' "$REPO_ROOT" | sed 's/[^A-Za-z0-9]/-/g')
+NAME_SLUG=$(printf '%s' "$REPO_NAME" | sed 's/[^A-Za-z0-9]/-/g')
+
+# Normalize Windows-style paths (backslashes) to forward slashes so [ -d ... ]
+# tests and greps work under Git Bash, where these vars look like C:\Users\...
+to_unix() { printf '%s' "$1" | sed 's#\\#/#g'; }
+
+# HOME works on mac/linux and Git Bash. Fall back to USERPROFILE on Windows.
+USER_HOME=$(to_unix "${HOME:-$USERPROFILE}")
+APPDATA=$(to_unix "$APPDATA")
+LOCALAPPDATA=$(to_unix "$LOCALAPPDATA")
+
+# Does file "$1" reference THIS repo? True on a full-path hit, or on the
+# parent-qualified tail "<parent>/<repo>" (separator-tolerant) so we stay robust
+# to /Users vs /c/Users while still requiring two matching path segments.
+file_mentions_repo() {
+  grep -q "$REPO_ROOT" "$1" 2>/dev/null && return 0
+  grep -q "$PARENT_NAME/$REPO_NAME" "$1" 2>/dev/null && return 0
+  grep -q "$PARENT_NAME\\\\$REPO_NAME" "$1" 2>/dev/null && return 0
+  return 1
+}
+
+copied_any=0
+
+log() { printf '  %s\n' "$1"; }
+
+# ---------------------------------------------------------------------------
+# 1) Claude Code  ->  ~/.claude/projects/<slug>/*.jsonl
+# ---------------------------------------------------------------------------
+sync_claude_code() {
+  base="$USER_HOME/.claude/projects"
+  [ -d "$base" ] || return 0
+
+  # Prefer an exact full-path slug match; otherwise match any project folder
+  # whose name ends with the repo's basename slug (covers /Users vs /c/Users).
+  match=""
+  if [ -d "$base/$REPO_SLUG" ]; then
+    match="$base/$REPO_SLUG"
+  else
+    for d in "$base"/*"-$NAME_SLUG" "$base"/"$NAME_SLUG"; do
+      [ -d "$d" ] && match="$d" && break
+    done
+  fi
+  [ -n "$match" ] || return 0
+
+  dest="$OUT_DIR/claude-code"
+  mkdir -p "$dest"
+  found=0
+  for f in "$match"/*.jsonl; do
+    [ -f "$f" ] || continue
+    cp "$f" "$dest/" && found=1
+  done
+  [ "$found" -eq 1 ] && { copied_any=1; log "claude-code: copied session(s)"; }
+}
+
+# ---------------------------------------------------------------------------
+# 2) Codex CLI  ->  ~/.codex/sessions/**/rollout-*.jsonl  (filter by cwd)
+# ---------------------------------------------------------------------------
+sync_codex() {
+  base="$USER_HOME/.codex/sessions"
+  [ -d "$base" ] || return 0
+
+  dest="$OUT_DIR/codex"
+  found=0
+  # Sessions are grouped by date, not repo, so match on the repo path/name
+  # recorded inside each rollout file.
+  for f in $(find "$base" -type f -name '*.jsonl' 2>/dev/null); do
+    if file_mentions_repo "$f"; then
+      mkdir -p "$dest"
+      cp "$f" "$dest/" && found=1
+    fi
+  done
+  [ "$found" -eq 1 ] && { copied_any=1; log "codex: copied session(s)"; }
+}
+
+# ---------------------------------------------------------------------------
+# 3) Cline (VS Code)  ->  globalStorage/saoudrizwan.claude-dev/tasks/<id>/
+#    Copy the clean ui_messages.json (human prompts live here); skip the
+#    api_conversation_history.json which is padded with <environment_details>.
+# ---------------------------------------------------------------------------
+sync_cline() {
+  # Candidate storage roots across OSes and VS Code variants.
+  roots="
+$USER_HOME/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/tasks
+$USER_HOME/Library/Application Support/Code - Insiders/User/globalStorage/saoudrizwan.claude-dev/tasks
+$USER_HOME/.config/Code/User/globalStorage/saoudrizwan.claude-dev/tasks
+$USER_HOME/.config/Code - Insiders/User/globalStorage/saoudrizwan.claude-dev/tasks
+$APPDATA/Code/User/globalStorage/saoudrizwan.claude-dev/tasks
+$APPDATA/Code - Insiders/User/globalStorage/saoudrizwan.claude-dev/tasks
+$LOCALAPPDATA/Code/User/globalStorage/saoudrizwan.claude-dev/tasks
+$LOCALAPPDATA/Code - Insiders/User/globalStorage/saoudrizwan.claude-dev/tasks
+"
+  dest="$OUT_DIR/cline"
+  found=0
+  # Use a newline-safe loop (paths contain spaces).
+  printf '%s\n' "$roots" | while IFS= read -r base; do
+    [ -n "$base" ] && [ -d "$base" ] || continue
+    for taskdir in "$base"/*/; do
+      [ -d "$taskdir" ] || continue
+      hist="$taskdir/api_conversation_history.json"
+      ui="$taskdir/ui_messages.json"
+      [ -f "$ui" ] || continue
+      # Only this repo's tasks: match full repo path or the parent-qualified tail
+      # "<parent>/<repo>" so we don't grab tasks from a same-named project elsewhere.
+      if file_mentions_repo "$hist"; then
+        tid=$(basename "$taskdir")
+        mkdir -p "$dest/$tid"
+        cp "$ui" "$dest/$tid/" && echo copied > "$OUT_DIR/.cline_hit"
+      fi
+    done
+  done
+  if [ -f "$OUT_DIR/.cline_hit" ]; then
+    rm -f "$OUT_DIR/.cline_hit"
+    copied_any=1
+    log "cline: copied session(s)"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# 4) GitHub Copilot (VS Code)
+#    workspaceStorage/<hash>/workspace.json maps a hash to a folder URI, and the
+#    same <hash>/chatSessions/*.json holds that workspace's chats. We decode the
+#    stored file:// URI and match it to this repo, then copy the sessions.
+#    Current Copilot files are plain JSON snapshots, so a verbatim copy is enough.
+# ---------------------------------------------------------------------------
+sync_copilot() {
+  roots="
+$USER_HOME/Library/Application Support/Code/User/workspaceStorage
+$USER_HOME/Library/Application Support/Code - Insiders/User/workspaceStorage
+$USER_HOME/.config/Code/User/workspaceStorage
+$USER_HOME/.config/Code - Insiders/User/workspaceStorage
+$APPDATA/Code/User/workspaceStorage
+$APPDATA/Code - Insiders/User/workspaceStorage
+$LOCALAPPDATA/Code/User/workspaceStorage
+$LOCALAPPDATA/Code - Insiders/User/workspaceStorage
+"
+  dest="$OUT_DIR/copilot"
+  rm -f "$OUT_DIR/.copilot_hit"
+  printf '%s\n' "$roots" | while IFS= read -r base; do
+    [ -n "$base" ] && [ -d "$base" ] || continue
+    for wj in "$base"/*/workspace.json; do
+      [ -f "$wj" ] || continue
+      hash_dir=$(dirname "$wj")
+      chat="$hash_dir/chatSessions"
+      [ -d "$chat" ] || continue
+
+      # Extract and decode the stored folder URI:
+      #   strip file:// scheme, turn %20 into spaces (paths with spaces),
+      #   and on Windows turn "c%3A" / "c:" into a comparable form.
+      uri=$(grep -o '"folder":[[:space:]]*"[^"]*"' "$wj" 2>/dev/null | sed 's/.*"folder":[[:space:]]*"//; s/"$//')
+      folder=$(printf '%s' "$uri" | sed 's#^file://##; s/%20/ /g; s/%3A/:/g; s/%3a/:/g')
+      folder=$(to_unix "$folder")
+
+      # Match on full path, or the parent-qualified tail "<parent>/<repo>" (robust
+      # to the /Users vs /c:/Users drive-letter difference between mac and Windows,
+      # while requiring two path segments so same-named projects don't collide).
+      case "$folder" in
+        "$REPO_ROOT"|*"/$PARENT_NAME/$REPO_NAME") ;;
+        *) continue ;;
+      esac
+
+      # Copilot uses *.json (stable VS Code, plain snapshot) or *.jsonl
+      # (newer/Insiders, delta-encoded). Copy either verbatim.
+      for f in "$chat"/*.json "$chat"/*.jsonl; do
+        [ -f "$f" ] || continue
+        mkdir -p "$dest"
+        cp "$f" "$dest/" && echo copied > "$OUT_DIR/.copilot_hit"
+      done
+    done
+  done
+  if [ -f "$OUT_DIR/.copilot_hit" ]; then
+    rm -f "$OUT_DIR/.copilot_hit"
+    copied_any=1
+    log "copilot: copied session(s)"
+  fi
+}
+
+echo "[pre-commit] syncing AI prompts for '$REPO_NAME'..."
+sync_claude_code
+sync_codex
+sync_cline
+sync_copilot
+
+if [ "$copied_any" -eq 1 ] && [ -d "$OUT_DIR" ]; then
+  git add "$OUT_DIR" 2>/dev/null
+  echo "[pre-commit] staged prompt-logger/"
+else
+  echo "[pre-commit] no local AI sessions found for this repo - skipping (this is fine)."
+fi
+
+exit 0
