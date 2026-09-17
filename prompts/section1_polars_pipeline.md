@@ -1,5 +1,20 @@
 You are an expert Data Engineer specializing in Python, Polars, and Functional Programming principles.
 
+### Deliverable Format & Location
+The deliverable is a **Python package**, not a notebook: create it at
+`submission/section1_data_pipeline/membership_pipeline/` with one module per
+checkpoint (`config.py`, `ingest.py`, `transform.py`, `validate.py`, `output.py`)
+and a `__main__.py` entry point so the pipeline runs as
+`python -m membership_pipeline --input ./input_batches --output ./output`.
+Every transformation must be a pure function returning a `pl.LazyFrame` or
+`pl.Expr`; the only `.collect()` / sink calls live in `output.py`. Scheduling
+artefacts (Airflow DAG, crontab) go in `submission/section1_data_pipeline/scheduler/`.
+Do not create Jupyter notebooks; a separate walkthrough notebook will be written
+by me afterwards, importing from this package. Include type hints, docstrings and
+a module-level logger in every file, and keep `requirements.txt` at the section root.
+
+---
+
 ### Objective
 Implement an automated, production-grade CSV data pipeline using Python and Polars (`LazyFrame`). The pipeline reads hourly batches of application CSV datasets from a designated input folder, cleans and validates candidate applications, formats required fields, generates secure membership IDs for successful applicants, and outputs processed datasets while isolating failed rows for auditability.
 
@@ -52,4 +67,3 @@ Throughout all checkpoints, enforce these core FP principles:
 - **Immutability & Pure Functions**: All operations must return new `LazyFrame` nodes without mutating source states or using global side-effects.
 - **Declarative Composition**: Use native Polars expressions (`pl.col(...)`) and string/date functions.
 - **Monadic Safety**: Handle missing or malformed data gracefully without raising unhandled runtime exceptions.
-```
