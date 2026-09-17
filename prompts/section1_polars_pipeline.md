@@ -53,11 +53,25 @@ To ensure total control, code quality, and pipeline integrity, you MUST implemen
 - Compute `membership_id` for successful rows: `<last_name>_<hash(YYYYMMDD)>` using the first 5 hex characters of the SHA-256 hash of `YYYYMMDD`.
 - **[STOP HERE AND WAIT FOR USER REVIEW & GREEN LIGHT]**
 
-#### Checkpoint 4: Output Isolation, Sink Partitioning & Orchestration
-- Separate data streams into `successful_applications` and `unsuccessful_applications` (including failure flags for auditing).
-- Trigger execution graph evaluation via `collect()` or `sink_parquet()` / `sink_csv()`.
-- Assemble the full pipeline runner function and provide example execution code / unit test setup.
-- **[STOP HERE AND WAIT FOR FINAL USER REVIEW]**
+#### Checkpoint 4: Output, Archival & Scheduling
+- Implement `output.py` as the **only** module that materialises the `LazyFrame`:
+  1. Partition the validated frame into `successful` and `unsuccessful` using the predicates from Checkpoint 3 (`pl.LazyFrame.filter` on the combined `is_successful` expression, and its negation).
+  2. Successful rows: select `membership_id, first_name, last_name, email, birthday, above_18, mobile` and sink to `./output/successful/successful_applications_<YYYYMMDD_HHMMSS>.csv`.
+  3. Unsuccessful rows: keep the original raw columns plus derived fields and a `rejection_reason` column (a `;`-joined list of every failed predicate — not just the first) and sink to `./output/unsuccessful/unsuccessful_applications_<YYYYMMDD_HHMMSS>.csv`.
+  4. The run timestamp must be a single value injected once (function parameter, default `datetime.now()`), so all files from one run share the same stamp and a scheduler can pass its logical run time for deterministic re-runs.
+- Implement `archive_batches(files, archive_dir, run_ts)` that moves every processed input file to `./archive/<run_ts>/`, so the next hourly run never re-processes the same batch. Handle the empty-input case as a logged no-op with exit code 0, not an error.
+- Implement `__main__.py` with `argparse` (`--input`, `--output`, `--archive`, `--no-archive`, `--log-level`) that wires ingest → transform → validate → output → archive, logs a one-line run summary (`files`, `rows_in`, `successful`, `unsuccessful`, `output_paths`) and returns non-zero on any exception so schedulers can alert.
+- Add scheduling artefacts under `./scheduler/`:
+  - `crontab`: an hourly entry running `python -m membership_pipeline` from the section root, with stdout/stderr appended to `logs/pipeline.log`.
+  - `airflow_dag.py`: an `@hourly` DAG with `catchup=False`, `max_active_runs=1`, 2 retries, and three tasks: `check_for_files` (`ShortCircuitOperator`) → `process_applications` (`PythonOperator` calling the package with `logical_date` as `run_ts`) → `publish_summary` (reads the summary via XCom).
+- Add `requirements.txt` at the section root (`polars` pinned to a major version; `apache-airflow` listed as an optional extra with a comment).
+- Run the pipeline end-to-end on the sample batches in `./input_batches/` and report the row counts per output file and the `rejection_reason` distribution in your response.
+- **[STOP HERE AND WAIT FOR USER REVIEW & GREEN LIGHT]**
+
+#### Checkpoint 5: Tests & Documentation
+- Add `tests/` with `pytest` unit tests for each pure function/expression from Checkpoints 2–3 (name splitting incl. salutations/suffixes, each birthday format, 29-Feb and boundary-date `above_18` cases, mobile regex, email predicate, `membership_id` against a known SHA-256 vector) and one integration test that runs `__main__` on a temp folder with a two-file fixture and asserts the output row counts and archive move.
+- Write `README.md` for the section covering: folder layout, how to install and run, how to schedule (cron and Airflow), output schemas, run results on the sample data, and an explicit **Assumptions** list (date-format disambiguation, whitespace handling in mobile numbers, the email-domain interpretation, salutation/suffix handling, membership-ID uniqueness limits, idempotency/re-run behaviour).
+- **[STOP HERE AND WAIT FOR USER REVIEW & GREEN LIGHT]**
 
 ---
 
