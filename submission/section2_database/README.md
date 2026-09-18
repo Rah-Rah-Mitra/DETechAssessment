@@ -497,7 +497,7 @@ once: Kenneth and Bethany Williamson, both born 1954-03-10, both `Williamson_2b7
 IDs for 695 applicants. Section 1 documents this under
 ["Membership IDs are not guaranteed unique"](../section1_data_pipeline/README.md).
 
-`Williamson_2b72a` sits at roughly row 450, so **the first 50 rows are collision-free** and the
+`Williamson_2b72a` appears at data rows 273 and 436, so **the first 50 rows are collision-free** and the
 primary key is safe on the committed seed. `generate_seed.py` still de-duplicates with a logged
 warning — a guard against a future Section 1 run whose ordering differs, not a workaround for
 today's data.
