@@ -1,0 +1,18 @@
+# Section 1 -- membership application pipeline
+#
+# Install with:  pip install -r requirements.txt
+
+# Core. Pinned to the 1.x major version: Polars is pre-2.0 and has been willing
+# to change expression semantics across majors, so an unbounded pin would let a
+# future release silently alter validation results.
+polars>=1.44,<2
+
+# Tests.
+pytest>=8.0
+
+# Optional -- scheduling via Airflow. Not required to run the pipeline, which
+# works standalone under cron (see scheduler/crontab); install only on the
+# Airflow host, ideally via the constraints file for your Airflow version:
+#   pip install "apache-airflow>=2.9,<3" \
+#     -c "https://raw.githubusercontent.com/apache/airflow/constraints-2.9.3/constraints-3.11.txt"
+# apache-airflow>=2.9,<3

@@ -1,0 +1,21 @@
+# Membership application pipeline -- hourly batch processing
+#
+# Install with:   crontab scheduler/crontab
+# Inspect with:   crontab -l
+#
+# PIPELINE_HOME must point at the section root (the folder containing
+# membership_pipeline/). Adjust both paths below for the target host.
+SHELL=/bin/bash
+PIPELINE_HOME=/opt/membership_pipeline
+PYTHON=/opt/membership_pipeline/.venv/bin/python
+
+# Run at the top of every hour. Batches that arrive mid-hour are picked up by
+# the next run; archival guarantees none is processed twice.
+#
+# stdout and stderr are both appended to logs/pipeline.log -- the pipeline logs
+# its run summary to stdout and any traceback to stderr, so one file holds the
+# full history. A non-zero exit status makes cron mail the owner.
+0 * * * * cd $PIPELINE_HOME && $PYTHON -m membership_pipeline --input ./input_batches --output ./output --archive ./archive --log-level INFO >> ./logs/pipeline.log 2>&1
+
+# Rotate the log monthly so it cannot grow without bound.
+0 0 1 * * cd $PIPELINE_HOME && mv ./logs/pipeline.log ./logs/pipeline.log.$(date +\%Y\%m) 2>/dev/null
