@@ -31,7 +31,8 @@ section1_data_pipeline/
 │   └── unsuccessful/    unsuccessful_applications_<YYYYMMDD_HHMMSS>.csv
 ├── archive/<run_ts>/    Processed batches, moved here so they are never reprocessed.
 ├── logs/                Cron redirects stdout and stderr here.
-└── requirements.txt
+├── requirements.txt
+└── section1_pipeline.ipynb   Walkthrough notebook — see "Quick demo" below.
 ```
 
 ## Install and run
@@ -61,6 +62,30 @@ and Airflow can alert on it.
 ```bash
 python -m pytest tests/ -q      # 134 passed
 ```
+
+## Quick demo
+
+`section1_pipeline.ipynb` walks one small batch through every stage, so you can watch the
+transformations happen rather than infer them from the output files. Run it from this folder
+(the notebook imports `membership_pipeline` from the working directory).
+
+It builds an eight-row batch — two applications that pass, and six that each trip a different
+rule — then applies the real pipeline stages in order:
+
+| Cell | Stage | Shows |
+|---|---|---|
+| 1 | `ingest.discover_batches` + `scan_batches` | The `LazyFrame`, its strict `String` schema, the raw rows |
+| 2 | `transform.clean` | `name` → `first_name`/`last_name`, `birthday` → `Date` → `YYYYMMDD` → `age` → `above_18`, `mobile` → normalised |
+| 3 | `validate.predicates` + `validate` | A per-rule pass/fail table beside the resulting `rejection_reason` |
+| 4 | `validate.membership_id_expr` | The ID derivation spelled out: `Dixon + sha256(19860110)[:5] = 3864b` → `Dixon_3864b` |
+| 5 | `output.write_outputs` + `archive_batches` | Both CSVs read back, and the input folder left empty by archival |
+
+The demo covers all five reason codes, including a row that fails two rules at once
+(`invalid_mobile;invalid_email`) and one that shows an unparseable birthday is reported as
+`unparseable_birthday` rather than `under_18`.
+
+Everything is written to a `tempfile.mkdtemp()` folder, so running the notebook never touches
+`input_batches/`, `output/` or `archive/`.
 
 ## Scheduling
 
