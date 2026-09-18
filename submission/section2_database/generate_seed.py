@@ -263,7 +263,7 @@ def build_members_sql(members: Sequence[dict[str, str]], source: Path) -> str:
     )
 
 
-def build_items_sql(source: Path) -> str:
+def build_items_sql() -> str:
     """Render ``03_seed_items.sql``: the catalogue, with explicit ``item_id``s.
 
     ``OVERRIDING SYSTEM VALUE`` is needed because ``item_id`` is
@@ -537,7 +537,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         raise SystemExit(f"No members read from {source}; nothing to seed.")
 
     write_file(args.output_dir / "02_seed_members.sql", build_members_sql(members, source))
-    write_file(args.output_dir / "03_seed_items.sql", build_items_sql(source))
+    write_file(args.output_dir / "03_seed_items.sql", build_items_sql())
     write_file(
         args.output_dir / "04_seed_transactions.sql",
         build_transactions_sql(members, anchor, source),
