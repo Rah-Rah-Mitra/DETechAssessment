@@ -177,6 +177,7 @@ The brief's compliance requirement fails if *any* copy survives. This table is t
 | QuickSight | Direct query mode; **SPICE disabled** for per-image datasets | No cached copies |
 | CloudWatch Logs | Retention 7 days; logs contain `image_id` only, never image bytes | — |
 | ECS task ephemeral storage | Destroyed with the task | — |
+| Amazon ECR | Holds only the processing-code container image, never customer data; immutable tags, lifecycle policy keeps the last 10 images | Nothing to purge |
 | Retained aggregates `metrics/daily/` | Contains no `image_id` or per-image row – **explicitly out of scope** of the purge (assumption 6) | — |
 
 **Backstop – compliance sweeper.** Native lifecycle/TTL controls are eventually-consistent (S3 daily, DynamoDB ≤ 48 h). To make the 7-day promise auditable rather than probabilistic, an EventBridge schedule runs a Lambda nightly that:
