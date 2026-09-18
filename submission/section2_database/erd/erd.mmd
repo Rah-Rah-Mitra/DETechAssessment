@@ -1,0 +1,38 @@
+erDiagram
+    MEMBERS ||--o{ TRANSACTIONS : "places"
+    TRANSACTIONS ||--|{ TRANSACTION_ITEMS : "contains"
+    ITEMS ||--o{ TRANSACTION_ITEMS : "is sold as"
+
+    MEMBERS {
+        text membership_id PK "Section 1 ID: last_name + 5 hex of SHA256(YYYYMMDD)"
+        text first_name "NOT NULL"
+        text last_name "NOT NULL; may be empty for a mononym"
+        text email "NOT NULL"
+        date birthday "NOT NULL; YYYYMMDD string parsed to a real DATE"
+        boolean above_18 "NOT NULL; as of 2022-01-01, per the Section 1 rule"
+        text mobile "NOT NULL; 8 digits, whitespace already stripped"
+    }
+
+    ITEMS {
+        bigint item_id PK "GENERATED ALWAYS AS IDENTITY -- surrogate"
+        text item_name UK "UNIQUE together with manufacturer_name"
+        text manufacturer_name UK "UNIQUE together with item_name"
+        numeric cost "NUMERIC(10,2); current list price, CHECK >= 0"
+        numeric weight_kg "NUMERIC(8,3); CHECK > 0"
+    }
+
+    TRANSACTIONS {
+        bigint transaction_id PK "GENERATED ALWAYS AS IDENTITY -- surrogate"
+        text membership_id FK "to MEMBERS, ON DELETE RESTRICT"
+        timestamptz transaction_ts "NOT NULL; when the purchase was made"
+        numeric total_items_price "NUMERIC(12,2); maintained by trigger, CHECK >= 0"
+        numeric total_items_weight "NUMERIC(10,3); maintained by trigger, CHECK >= 0"
+    }
+
+    TRANSACTION_ITEMS {
+        bigint transaction_id PK,FK "to TRANSACTIONS, ON DELETE CASCADE"
+        bigint item_id PK,FK "to ITEMS, ON DELETE RESTRICT"
+        integer quantity "NOT NULL; CHECK > 0"
+        numeric unit_cost_at_purchase "NUMERIC(10,2); price snapshot, CHECK >= 0"
+        numeric unit_weight_at_purchase "NUMERIC(8,3); weight snapshot, CHECK > 0"
+    }
