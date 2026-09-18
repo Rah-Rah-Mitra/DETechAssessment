@@ -1,0 +1,43 @@
+# Section 2 -- one service, one command to stand the database up.
+#
+#   cp .env.example .env
+#   docker compose up -d --build
+#
+# No `version:` key: it has been obsolete since Compose v2 and current versions
+# warn about it.
+
+services:
+  db:
+    build: .
+    image: section2-sales-db
+    container_name: section2_sales_db
+
+    # Credentials live in .env, which is gitignored. .env.example is the
+    # committed template -- never put a real password in the compose file.
+    env_file: .env
+
+    ports:
+      # Host 5432 may already be taken by a local Postgres. Override with
+      # HOST_PORT=15432 in .env if so.
+      - "${HOST_PORT:-5432}:5432"
+
+    volumes:
+      # Named volume: the seed only runs when this is empty, so
+      # `docker compose down -v` is how you re-seed.
+      - pgdata:/var/lib/postgresql/data
+      # Mounted read-only so the Checkpoint 4 queries can be run in-container
+      # without a local psql:  docker compose exec db psql ... -f /queries/x.sql
+      - ./queries:/queries:ro
+
+    healthcheck:
+      # $$ escapes to a literal $ for the container's shell, so these resolve
+      # inside the container rather than being interpolated by Compose.
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      # The first boot has to initdb and run the whole seed before it can pass.
+      start_period: 30s
+
+volumes:
+  pgdata:
